@@ -1,1 +1,16 @@
-N6cqdfxUwFoVAZRDotQeXY5833a4pA5HBvB3JW5oaye7Clk5cK40v4QF1wo9M9tYPPZDwDEg5muyUha3Uick/3+9juj84f4VCA9B18CYtAYqTHOumHLqfDg6GeBPMnVNO4N0ww9GcNvfDfQ4fwBbtoaajnEg4nTo889XrjTKPFv+NFbpOlcJM6d7IBYefZrUFA0gu527IknRMq39OD2XNSpo2xlCTC+u4pnty+hpWpqwnw3+u6XE79lD7WjE0hTo7qRyls7MaHZ2vy7K4ERxCRJ3hyaLjz4W1k0aCgaYNyJa2SqMHnk=
+[
+  {
+    "id": "84830a625c25da0e",
+    "username": "Slamn",
+    "password": "cfz",
+    "expiresAt": "2026-12-31",
+    "allowOffline": false
+  },
+  {
+    "id": "android_device_id_2",
+    "username": "user2",
+    "password": "pass2",
+    "expiresAt": "2025-11-30",
+    "allowOffline": false
+  }
+]
