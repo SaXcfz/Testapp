@@ -1,1 +1,131 @@
 vless://769d6086-7e04-4f97-aa13-d43d78bfcf0d@linod-javad.localip.ir:31146?security=reality&encryption=none&pbk=QAoJHZT6_DZsBu-jH74uYZUTpGgxmvN2tXpRKj4CygE&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=play-fe.googleapis.com&sid=cf4e6f8338#premium%2010
+# Config for OpenVPN 2.x
+# Enables connection to GUI
+management /data/user/0/free.vpn.secure.turbo.proxy.hotspot.ksavpn/cache/mgmtsocket unix
+management-client
+management-query-passwords
+management-hold
+
+setenv IV_GUI_VER "free.vpn.secure.turbo.proxy.hotspot.ksavpn 1.7.81" 
+setenv IV_SSO openurl,crtext
+machine-readable-output
+allow-recursive-routing
+ifconfig-nowarn
+client
+verb 4
+connect-retry 2 300
+resolv-retry 60
+dev tun
+remote 149.56.205.55 1194 udp
+<ca>
+-----BEGIN CERTIFICATE-----
+MIIDSzCCAjOgAwIBAgIUMtxYIl5wImEryaaISpVEau4q8cswDQYJKoZIhvcNAQEL
+BQAwFjEUMBIGA1UEAwwLRWFzeS1SU0EgQ0EwHhcNMjUwMzE4MTIwODQzWhcNMzUw
+MzE2MTIwODQzWjAWMRQwEgYDVQQDDAtFYXN5LVJTQSBDQTCCASIwDQYJKoZIhvcN
+AQEBBQADggEPADCCAQoCggEBAIs4xsu5DfIwY1j+6vGLDF7oSrd//y3gFl/68wFU
+/mCZQzYOPfq+ZmcBRTbaTCAM9DSXZfxFdAjhivQTAXGWeqQeZnc/WaoR0qd24smg
+Iv5Mg+1WtJ7pR8KN4hN5ZaChff9DTnWR8Rf/MMV0osmlCKhg8z2fyWnhRPxgwp+4
+CfE9j7fjkgmZMoscdRmk9oQaaTgST62Nco/+zcQRhznY1PkYz7mdz2ub7lDdUYCQ
+/rvm308NBrmRJCZteKPIXI7ZbS1t+qWT3UgUVma53eB1cWEsT6GI2n3syD61kxU6
+a9nD/aBHCTQEDc9aNgLkVUZMVB1K+pJe5V6BulKZqC9WFycCAwEAAaOBkDCBjTAM
+BgNVHRMEBTADAQH/MB0GA1UdDgQWBBTmhCaYa+4Paopri8COOr+HNm8plzBRBgNV
+HSMESjBIgBTmhCaYa+4Paopri8COOr+HNm8pl6EapBgwFjEUMBIGA1UEAwwLRWFz
+eS1SU0EgQ0GCFDLcWCJecCJhK8mmiEqVRGruKvHLMAsGA1UdDwQEAwIBBjANBgkq
+hkiG9w0BAQsFAAOCAQEATBKDHP9auGrnIhqCHXxGRwBJ8L8YbbCoA7sUEizC/uP6
+vH1HcR9FsyFYIZiernOSEm+sVDYNIdy+z+0qgHJK2y8B2xVJemMwep/wgmRDSJI0
+CTkbCkz/FjH8u3nLqFlHZIrbrpHxpmbHSdX+hthlcgLimD/BVXAMsDFok3MhGvE/
+WPdkFtzZZ64aGUKUdjlPiDSNlrDl05d2jrmZXOu8yJM5/JsjXtyKf3Fs2JbxVDR0
++cMML3rx65TFGdy80eZ1BWYAWHd2w9N7NekDZC0LW89EQV8RqMn4MwQGxsl6lcYo
+V2zxuHeIntoaw0DwcFTjd2OPWX3PlsDMqx5s4QW5fQ==
+-----END CERTIFICATE-----
+</ca>
+<key>
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDIuDDSMUFpmAj2
+iu4az41Dl1bzxsnkuB9GVASttU+2+42005JlH3QetANbxxbaz/q/URKk0uT5e+Kg
+10Qp+sW/GW8LmCEJ9FUtQpMfh6XIj9+m7D5giBvSKdrdoRvKkIeR4lX1kMfobWid
+A5PLiVkgzbZx7wD6K14//Y0RoY3uzxy/HuQOcNheqgrTU6vsbolshp5rnk6eDwCV
+55Vi8nnS1SqkKMtR5vp8OUapj3V0Csw3lsWzieft0CQybo7V9E0Jci4TS4B/gPPu
++txC8Iv3An+BqOjmr2sQQ4Gr3TBC4r41ClMW0e0uHV3dPPr1RNGmHy9ieOQo00LO
+Ng3OXGKnAgMBAAECggEABjIhV6urkD3gMPQS64Lyol5+kaHWQ5gnZv1a853AKy7S
+rf1F7Jcu92+pFuErZG+9FsDC6ZGU/dqEIWDjusQB7Kc1VU9J3cvMAUyny/Zc+Lbw
+OW/bcRFigndGSUca24LgnHE3JBBnC1atPwOIQWUo+ik/c37kMdS64RDLlPq+rdtq
+zvB8einfo2KwpR5KNkRVgfBiSVRhfCzuRweycX4YnuB6rNvZ2Pi02Iavo7nOojwG
+VCBqGoEhhW/KnD3XRV2s7Vs6AXYhcC0/k5brfI5+ZI2/46iHKFwQes5Yuu0TVk2b
+6fijgU+w8NfSIwB1Wl4fa0DXSMMi1ZeVuy+c6zioQQKBgQDZUNZTzAL1J8DNucda
+A1cvUYNNnHFJ+8wbRLSxkgxCb265QmGTX8iZ/BkKpFwHk8jap3edl/9Wwaui0mk+
+ooydfRdFfiTKQ8yldQ4wEXst6Qe2OCqQAsyExc758SEUWpU9X2aM7Y0EMNmdVbpR
+hygqDJr4pr8G1jMMkpTTp19pRwKBgQDscw4MEIa3JOZzaWf1tynbJYenJid5PNiq
+28S8b8VtTLxsZ2f3rvrXS+wTuhp0UxOu+zYIOoPbYeJxbR/SpGqPJhZm6es/nzVJ
+b1vE74f50z6vSzZd1vNe54TpxGB1EtQej/hfSWL+8MRS9sthUlajoROFXigCb0xl
++CNNSBHroQKBgG71HVnP0rrFv2XLM4Q8LGnWnsoj1JxH2mEZ5YC851GMf+ZLhHKw
+90XYOBj87phX1rf9xc9Lam4rmK0b7eyzJkTLN/Sdgb9cesMIT2QvqMs6LlvVtbWu
+GCq6rQFlItS3o3egnEXcjKHVJ2dz/BvgfJtrsDzBNswQ1iPXO/INhWPFAoGBANzB
+UrUa3NuyvOG14JS9THvJH0yER8hecZ+bjaOs6vNv+F9xb9UEbjeCL8f/MeG3CqKM
+8dZe42p4ihUCH/rm/IHnunSdIsEEoJiOOmy0ggxSGK1KmFimbhQGLcafTLshOB/M
+pMQ53Q5Otc0Lk7iqSi99HJ+g19PmG7r8H+FwTyLhAoGAB9KN7WdOtv5BuQwkVmxS
+99DR/qraP/Fo5/cipZANtRcMFeQxkE4qQccghbJc9xskz/1iiFzBRCi1fn50oy/S
+4Hcfwf5a7z8TO6NT2mtDkThWUxLEJIMdCru+kFLDOIHXoNQ4FaPVsN0yiaCYuUbt
+j++ZhvEfigLiykXzCu/rEEU=
+-----END PRIVATE KEY-----
+</key>
+<cert>
+-----BEGIN CERTIFICATE-----
+MIIDWTCCAkGgAwIBAgIQYn3HCSibCF21Kx0k5P5eAzANBgkqhkiG9w0BAQsFADAW
+MRQwEgYDVQQDDAtFYXN5LVJTQSBDQTAeFw0yNTAzMTgxMjA4NDRaFw0zNTAzMTYx
+MjA4NDRaMBYxFDASBgNVBAMMC3ZwbnNlcnZlcjYxMIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEAyLgw0jFBaZgI9oruGs+NQ5dW88bJ5LgfRlQErbVPtvuN
+tNOSZR90HrQDW8cW2s/6v1ESpNLk+XvioNdEKfrFvxlvC5ghCfRVLUKTH4elyI/f
+puw+YIgb0ina3aEbypCHkeJV9ZDH6G1onQOTy4lZIM22ce8A+iteP/2NEaGN7s8c
+vx7kDnDYXqoK01Or7G6JbIaea55Ong8AleeVYvJ50tUqpCjLUeb6fDlGqY91dArM
+N5bFs4nn7dAkMm6O1fRNCXIuE0uAf4Dz7vrcQvCL9wJ/gajo5q9rEEOBq90wQuK+
+NQpTFtHtLh1d3Tz69UTRph8vYnjkKNNCzjYNzlxipwIDAQABo4GiMIGfMAkGA1Ud
+EwQCMAAwHQYDVR0OBBYEFIDtfLLuJm2IZDYoIs0MzBxgSjjcMFEGA1UdIwRKMEiA
+FOaEJphr7g9qimuLwI46v4c2bymXoRqkGDAWMRQwEgYDVQQDDAtFYXN5LVJTQSBD
+QYIUMtxYIl5wImEryaaISpVEau4q8cswEwYDVR0lBAwwCgYIKwYBBQUHAwIwCwYD
+VR0PBAQDAgeAMA0GCSqGSIb3DQEBCwUAA4IBAQA6QcHhjweFMfcg9M/KHxNR/Flx
+m4RQv1yc+3Pw8v3TiPvVkFT8MQ4wtxgQv1GcDsKeRDT+S+UUNY1aN3UU+H+fuogB
+WoPAETaRnaRr+w4ZTquU+OddcP0ScYUanYQ3MZ/Qkb8vwcTKV3Vtn037WLAZPXqF
+FN3DNZ6byMbKNVlqkr0au4OuJM/6aeHVG7csr2K154d8Y7dNolePbzlrZmxdoWLu
+piwh5fhy8OZLZsPjySzPTvmdyqK0AHoZhRmMnGDhtB9iDPXv9KO3zbO0S7U1A2Up
+kSbZ7zepB17nOsCO9DqT+vGaFxK9OaALRHEWADEZg9UHQ8qxAdMofgNYRFvT
+-----END CERTIFICATE-----
+</cert>
+<tls-crypt>
+-----BEGIN OpenVPN Static key V1-----
+71ccdd7836649b0fc51c753b067fed37
+7ca145cd088512bf5c9caacf2824cfc8
+8a5a73fa0f2ff09b562cc385b335d9b3
+d09dfb08fda7b28ead529f6b10f35e5e
+ca3df7a7400f8bf4e619791bf7ea3e3c
+44fa313e4f272a72b54e892a7f705e8c
+152bb8e2d5368b2e2bcf9d5758755ac8
+931cc523f1471ea1191e810be213f3ef
+66a6ebd5f77763ab489d7958cd7fa8fd
+eb9fe2790340e7f068869c750a715765
+1ad9f0b0caa83ada5703fa9575293453
+d94eb79f12ebf47d312fb315a0c2357c
+22642c3e1c5bcdede34b7f0e09f91bae
+e825bc0a2346cea4dde874eea202a9fd
+0024ff540b46f2b4b5e49a857e5e7739
+1c242b75a0a9884abcf1ab0bb7cdf605
+-----END OpenVPN Static key V1-----
+</tls-crypt>
+dhcp-option DNS 8.8.8.8
+dhcp-option DNS 8.8.4.4
+dhcp-option DOMAIN blinkt.de
+nobind
+remote-cert-tls server
+cipher AES-256-CBC
+auth SHA512
+persist-tun
+# persist-tun also enables pre resolving to avoid DNS resolve problem
+preresolve
+# Use system proxy setting
+management-query-proxy
+# Custom configuration options
+# You are on your on own here :)
+# These options found in the config file do not map to config settings:
+resolv-retry infinite 
+ignore-unknown-option block-outside-dns 
+
