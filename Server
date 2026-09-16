@@ -1,5 +1,9 @@
 vless://769d6086-7e04-4f97-aa13-d43d78bfcf0d@linod-javad.localip.ir:31146?security=reality&encryption=none&pbk=QAoJHZT6_DZsBu-jH74uYZUTpGgxmvN2tXpRKj4CygE&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=play-fe.googleapis.com&sid=cf4e6f8338#premium%2010
 
+wireguard://dufu@jbbj:443?address=172.16.0.2%2F32&presharedkey=xyhhf&reserved=0%2C0%2C0&publickey=itu&mtu=1420#ygj
+
+
+
 # Config for OpenVPN 2.x
 # Enables connection to GUI
 management /data/user/0/free.vpn.secure.turbo.proxy.hotspot.ksavpn/cache/mgmtsocket unix
@@ -129,4 +133,6 @@ management-query-proxy
 # These options found in the config file do not map to config settings:
 resolv-retry infinite 
 ignore-unknown-option block-outside-dns 
+
+socks://Og@ehdhdhje:443#hdfhdhh
 
