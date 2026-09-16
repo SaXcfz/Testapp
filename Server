@@ -1,16 +1,1 @@
-[
-  {
-    "id": "84830a625c25da0m",
-    "username": "conkesh",
-    "password": "lol",
-    "expiresAt": "2026-12-31",
-    "allowOffline": true
-  },
-  {
-    "id": "android_device_id_2",
-    "username": "user2",
-    "password": "pass2",
-    "expiresAt": "2025-11-30",
-    "allowOffline": false
-  }
-]
+vless://769d6086-7e04-4f97-aa13-d43d78bfcf0d@linod-javad.localip.ir:31146?security=reality&encryption=none&pbk=QAoJHZT6_DZsBu-jH74uYZUTpGgxmvN2tXpRKj4CygE&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=play-fe.googleapis.com&sid=cf4e6f8338#premium%2010
