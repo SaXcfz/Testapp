@@ -1,8 +1,14 @@
-vless://769d6086-7e04-4f97-aa13-d43d78bfcf0d@linod-javad.localip.ir:31146?security=reality&encryption=none&pbk=QAoJHZT6_DZsBu-jH74uYZUTpGgxmvN2tXpRKj4CygE&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=play-fe.googleapis.com&sid=cf4e6f8338#premium%2010
-
-wireguard://dufu@jbbj:443?address=172.16.0.2%2F32&presharedkey=xyhhf&reserved=0%2C0%2C0&publickey=itu&mtu=1420#ygj
-
-
+vless://769d6086-7e04-4f97-aa13-d43d78bfcf0d@home.rent.now.tehran1.fzenivo.store:31146?security=reality&encryption=none&pbk=QAoJHZT6_DZsBu-jH74uYZUTpGgxmvN2tXpRKj4CygE&headerType=&fp=chrome&spx=%2F&type=tcp&flow=xtls-rprx-vision&sni=play-fe.googleapis.com&sid=cf4e6f8338#Torkani_Server.z
+vless://769d6086-7e04-4f97-aa13-d43d78bfcf0d@home.rent.now.tehran.fzenivo.store:31146?security=reality&encryption=none&pbk=QAoJHZT6_DZsBu-jH74uYZUTpGgxmvN2tXpRKj4CygE&headerType=&fp=chrome&spx=%2F&type=tcp&flow=xtls-rprx-vision&sni=play-fe.googleapis.com&sid=cf4e6f8338#Torkani_Server.5
+vless://8a6729c4-81d4-4b05-8747-3fffc17b6a64@meshddeck.ir:2096?mode=stream-up&path=%2Fmashdi&security=tls&alpn=h2&encryption=none&insecure=0&host=VbBcSeZs8.MuChMeNcH.BoNd&fp=unsafe&type=xhttp&allowInsecure=0&sni=VbBcSeZs8.MuChMeNcH.BoNd#Torkani_Server.i
+vless://769d6086-7e04-4f97-aa13-d43d78bfcf0d@dark1.fzenivo.store:31146?security=reality&encryption=none&pbk=QAoJHZT6_DZsBu-jH74uYZUTpGgxmvN2tXpRKj4CygE&headerType=&fp=chrome&spx=%2F&type=tcp&flow=xtls-rprx-vision&sni=play-fe.googleapis.com&sid=cf4e6f8338#Torkani_Server.g
+vless://8a6729c4-81d4-4b05-8747-3fffc17b6a64@meshddeck.ir:2087?mode=stream-up&path=%2Fmashdi&security=tls&alpn=h2&encryption=none&insecure=0&host=IdTbIwGq7.G3OtVaRaN.BoNd&fp=unsafe&type=xhttp&allowInsecure=0&sni=IdTbIwGq7.G3OtVaRaN.BoNd#Torkani_Server.z
+vless://ba679991-da87-4885-b715-b06fe763f748@chess.com:2096?mode=stream-one&path=%2Fsin5&security=tls&alpn=h2&encryption=none&insecure=0&host=ray.kilometr11.bond&fp=unsafe&type=xhttp&allowInsecure=0&sni=ray.kilometr11.bond#Torkani_Server.d
+vless://18f1b94e-35f1-4c7f-953c-7b4681c52339@159.65.57.75:443?security=&encryption=none&host=store.steampowered.com&headerType=http&type=tcp#Torkani_Server.o
+vless://8a6729c4-81d4-4b05-8747-3fffc17b6a64@meshddeck.ir:2053?mode=stream-up&path=%2Fmashdi&security=tls&alpn=h2&encryption=none&insecure=0&host=IdTbIwGq6.G3OtVaRaN.BoNd&fp=unsafe&type=xhttp&allowInsecure=0&sni=IdTbIwGq6.G3OtVaRaN.BoNd#Torkani_Server.q
+vless://8a6729c4-81d4-4b05-8747-3fffc17b6a64@meshddeck.ir:2087?mode=stream-up&path=%2Fmashdi&security=tls&alpn=h2&encryption=none&insecure=0&host=VbBcSeZs7.MuChMeNcH.BoNd&fp=unsafe&type=xhttp&allowInsecure=0&sni=VbBcSeZs7.MuChMeNcH.BoNd#Torkani_Server.f
+vless://18f1b94e-35f1-4c7f-953c-7b4681c52339@159.89.24.255:443?security=&encryption=none&host=store.steampowered.com&headerType=http&type=tcp#Torkani_Server.6
+vless://18f1b94e-35f1-4c7f-953c-7b4681c52339@209.38.241.197:443?security=&encryption=none&host=store.steampowered.com&headerType=http&type=tcp#Torkani_Server.h
 
 # Config for OpenVPN 2.x
 # Enables connection to GUI
@@ -133,6 +139,4 @@ management-query-proxy
 # These options found in the config file do not map to config settings:
 resolv-retry infinite 
 ignore-unknown-option block-outside-dns 
-
-socks://Og@ehdhdhje:443#hdfhdhh
 
