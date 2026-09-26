@@ -1,0 +1,860 @@
+═══════════════════════════════════════════════════════════
+GIT STATE
+═══════════════════════════════════════════════════════════
+85968de fix(ping): keep failed nodes as 0/Timeout; Xray policy handshake=2s for fast dead-node fail
+86ce3eb fix(ping): keep failed nodes as 0 (Timeout) instead of dropping them
+98e7e81 perf(ping): drop sing-box fallback (always 0/N), xray timeout 4s, Semaphore 6
+
+
+═══════════════════════════════════════════════════════════
+SECTION A: pingNodeListViaUrlTest — FULL BODY (brace-counted)
+═══════════════════════════════════════════════════════════
+    private suspend fun kotlinx.coroutines.CoroutineScope.pingNodeListViaUrlTest(
+        targets: List<NodeEntity>
+    ): Boolean {
+        val parsedList = targets.mapNotNull { entity ->
+            runCatching { parseEntity(entity) }.getOrNull()?.let { entity.id to it }
+        }
+        if (parsedList.isEmpty()) {
+            log("urltest: no parseable nodes in the batch")
+            return false
+        }
+
+        // Split by protocol: an OpenVPN or WireGuard entry that sing-box
+        // cannot decode aborts the whole batch with
+        // "unknown outbound type: openvpn-client". Measured per scheme so a
+        // single unsupported node never disables urltest for the rest.
+        // Split first on the routing decision: xhttp and reality must be
+        // measured by Xray, the rest keep their existing split. The
+        // partition is by transport shape, not by short scheme, so it has
+        // to happen before the scheme-based urltest/per-node split below.
+        // TEMP DEBUG: log every node's partition decision and the
+        // streamSettings the router is reading, so a miscategorised node
+        // (e.g. VLESS+WS+TLS routed to sing-box) is visible in the log
+        // instead of only being inferable from the fallback message.
+        parsedList.forEach { (_, node) ->
+            @Suppress("UNCHECKED_CAST")
+            val stream = node.outbound["streamSettings"] as? Map<String, Any?>
+            val net = stream?.get("network")?.toString() ?: "?"
+            val sec = stream?.get("security")?.toString() ?: "?"
+            val use = com.lumen.core.config.builder.XrayRouter.shouldUseXray(node)
+            log("PARTITION: ${node.name} scheme=${node.scheme} net=$net sec=$sec xray=$use")
+        }
+        val (xrayNodes, nonXray) = parsedList.partition { pair ->
+            com.lumen.core.config.builder.XrayRouter.shouldUseXray(pair.second)
+        }
+        val (urlTestable, perNodeOnly) = nonXray.partition { pair ->
+            pair.second.scheme.trim().lowercase(java.util.Locale.US) in URL_TEST_SCHEMES
+        }
+
+        var anyResult = false
+        var missedDeferred: kotlinx.coroutines.Deferred<Unit>? = null
+        var xrayDeferred: kotlinx.coroutines.Deferred<Unit>? = null
+
+        // Hoisted out of the urltest block below so the xray batch can
+        // reach the application context too.
+        val app = getApplication<Application>()
+
+        // Xray batch. Xray has no Clash-style controller to fan a list
+        // through one process, so each node is measured by its own Xray
+        // spawn - the shape V2rayNG uses, and the only one whose number
+        // matches what Connect will do afterwards. Launched first so it
+        // overlaps the urltest and ovpn batches.
+        val xrayParsed = xrayNodes.map { it.second }
+        val xrayIds = xrayNodes.map { it.first }
+        if (xrayParsed.isNotEmpty()) {
+            log("urltest: ${xrayParsed.size} xray node(s): " +
+                xrayParsed.joinToString(",") { it.name })
+            anyResult = true
+            xrayDeferred = async {
+                // Bulk VLESS/Reality/SS/VMess/Trojan go through the process
+                // based BulkSocksPinger for now: the in-process JNI probe
+                // returns -1 on every node in the current build, and while
+                // that is being diagnosed the bulk pass has to keep
+                // producing numbers. Single-node checks still hit the JNI
+                // path (performRealPing) and log XRAY_FAIL trace=, which is
+                // the surface that tells us why the JNI measure fails.
+                // In-process JNI probe (XrayPing). The previous process-based
+                // BulkSocksPinger paid a runtime start + SOCKS loopback hop
+                // per node and reported 3-5x the number V2rayNG shows for
+                // the same server. Single-node checks already use XrayPing
+                // via performRealPing.
+                // In-process JNI path. The previous process-based
+                // BulkSocksPinger(Core.XRAY) paid one libxray.so spawn and
+                // a local SOCKS5 hop per batch, which is why the reported
+                // RTT ran 300-800 ms on servers V2rayNG measures at
+                // 160-200 ms. libxray.so is being removed from the APK
+                // entirely; the AAR's MeasureOutboundDelay is the same
+                // entry point V2rayNG uses.
+                val result = com.lumen.app.ping.XrayPing(app).measure(
+                    nodes = xrayParsed,
+                    // 4 s covers a Reality+Vision handshake on a slow
+                    // carrier; 2.5 s was cutting some healthy nodes off
+                    // before the target HTTP response landed.
+                    timeoutMs = 4_000,
+                )
+                log("xray bulk: ${result.log}")
+                log("DEBUG xray input size=${xrayParsed.size} ids=${xrayIds.size} " +
+                    "latencyKeys=${result.latencies.keys.toList().sorted()}")
+                if (result.latencies.isNotEmpty()) {
+                    val completedPings = mutableMapOf<String, Int>()
+                    result.latencies.forEach { (index, ping) ->
+                        val id = if (index in xrayIds.indices) xrayIds[index] else "OUT_OF_RANGE_$index"
+                        log("DEBUG xray write index=$index id=${id.take(8)} ping=$ping")
+                        nodeDao.updatePing(id, ping)
+                        completedPings[id] = ping
+                    }
+                    if (_settings.value.pingAutoDeleteUnreachable) {
+                        val removed = removeUnhealthyNodesAfterPing(
+                            completedPings = completedPings,
+                            thresholdMs = _settings.value.pingAutoDeleteThresholdMs
+                        )
+                        if (removed > 0) log("Auto-removed $removed xray node(s) after ping")
+                    }
+                }
+                // Failed xray nodes whose transport sing-box can dial
+                // (tcp / ws / grpc) get a second pass on the per-node
+                // sing-box path. Only xhttp stream-one and reality keep
+                // the "no retry" rule from the older router, since those
+                // are the shapes sing-box mishandles.
+                val missedXray = xrayParsed.filterIndexed { i, _ ->
+                    i !in result.latencies.keys
+                }
+                // Every Xray miss retries on sing-box. The previous
+                // `network != "xhttp"` filter silently dropped every
+                // XHTTP+Reality node from the fallback: they failed in
+                // the Xray bulk (server-side EOF / 530) and never got a
+                // second chance, so they stayed blank forever unless the
+                // user tapped the single-node "Ping" button. The reason
+                // the filter existed (sing-box fallback collided with the
+                // Xray bulk on the same listening ports and aborted with
+                // EADDRINUSE) is now handled by the fixed port ranges:
+                // Xray bulk listens on 20_000+, sing-box fallback on
+                // 30_000+, and the main sing-box bulk process picks from
+                // 10_000..30_000-size so the three never overlap.
+                val retryable = missedXray
+                if (retryable.isNotEmpty()) {
+                    val retryIds = retryable.mapNotNull { node ->
+                        xrayIds.getOrNull(xrayParsed.indexOf(node))
+                    }
+                    val retryEntities = targets.filter { it.id in retryIds }
+                    if (retryEntities.isNotEmpty()) {
+                        // Route the retry through BulkSocksPinger(SINGBOX)
+                        // directly. pingNodeListPerNode -> performRealPing
+                        // consults XrayRouter again, which sends TLS/WS
+                        // nodes right back to the same JNI core that just
+                        // failed. The log then reads "retried on sing-box"
+                        // while XRAY_CALLED fires a second time on the
+                        // same dead path.
+                        log("xray fallback: ${retryEntities.size} node(s) retried on sing-box bulk")
+                        val retryParsed = retryEntities.mapNotNull { entity ->
+                            runCatching { parseEntity(entity) }.getOrNull()
+                        }
+                        if (retryParsed.isNotEmpty()) {
+                            val fallbackWorkDir = java.io.File(app.cacheDir, "xray-fallback")
+                                .apply { mkdirs() }
+                            val fallbackHostnames = (
+                                retryParsed.map { it.server }.filter { it.isNotBlank() } +
+                                    listOf("cp.cloudflare.com")
+                                ).distinct()
+                            val fallbackPinned = runCatching {
+                                ServerAddressPinner.resolveForPing(fallbackHostnames)
+                            }.getOrDefault(emptyMap())
+                            val fallbackOptions = pingSingboxOptions(
+                                socksPort = 0,
+                                obfsPort = SingboxConfigBuilder.OBFS_LOCAL_PORT,
+                                workDir = fallbackWorkDir,
+                                pinnedServerIps = fallbackPinned
+                            )
+                            val fallbackResult = com.lumen.app.ping.BulkSocksPinger(app).measure(
+                                nodes = retryParsed,
+                                core = com.lumen.app.ping.BulkSocksPinger.Core.SINGBOX,
+                                options = fallbackOptions,
+                                timeoutMs = 2_500,
+                                // Separate range from the Xray bulk above
+                                // (20_000). Even with the process reaper
+                                // wait, overlapping ranges caused
+                                // EADDRINUSE on the fallback.
+                                portBase = 30_000,
+                            )
+                            log("xray fallback bulk: ${fallbackResult.log}")
+                            if (fallbackResult.latencies.isNotEmpty()) {
+                                val fallbackCompleted = mutableMapOf<String, Int>()
+                                fallbackResult.latencies.forEach { entry ->
+                                    val index = entry.key
+                                    val ping = entry.value
+                                    val id = retryEntities.getOrNull(index)?.id
+                                    if (id != null) fallbackCompleted[id] = ping
+                                }
+                                if (fallbackCompleted.isNotEmpty()) {
+                                    nodeDao.updatePingsBatch(
+                                        fallbackCompleted.map { (id, ping) ->
+                                            Pair(id, ping as Int?)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Launch the OVPN/WG batch FIRST so it runs in parallel with
+        // urltest. Both batches touch independent subsets of the list;
+        // the previous order waited for urltest to finish and only then
+        // started the per-node work, so a mixed subscription paid the
+        // urltest wall clock plus the per-node wall clock back to back.
+        val ovpnBatch = perNodeOnly.mapNotNull { pair ->
+            targets.firstOrNull { it.id == pair.first }
+        }
+        val ovpnDeferred: kotlinx.coroutines.Deferred<Unit>? = if (ovpnBatch.isNotEmpty()) {
+            log("urltest: ${ovpnBatch.size} non-urltest node(s) via per-node path")
+            anyResult = true
+            async { pingNodeListPerNode(ovpnBatch, bulkPingGeneration) }
+        } else null
+
+        if (urlTestable.isNotEmpty()) {
+            val workDir = java.io.File(app.cacheDir, "urltest-options").apply { mkdirs() }
+            // Pre-resolve every server hostname through a foreign resolver
+            // and pin the answer. On an Iranian carrier the local resolver
+            // answers foreign hostnames with the block-page IP, and without
+            // this pin the bulk pass dials that address and reports every
+            // node as unreachable. The per-node path already does exactly
+            // this through ServerAddressPinner; the bulk path was missing
+            // it.
+            // Bound the outbound count one sing-box instance has to
+            // hold. A 12-node list fits in one process; a subscription
+            // with several hundred entries does not — startup time grows
+            // with the config, memory grows with it, and an over-large
+            // outbound list can abort the process before the Clash API
+            // ever binds. 150 outbounds keeps startup under a second.
+            val urlTestBatches = urlTestable.chunked(150)
+            val allMissed = mutableListOf<NodeEntity>()
+
+            for ((batchIndex, batch) in urlTestBatches.withIndex()) {
+                val hostnames = (
+                    batch.map { it.second.server }
+                        .filter { it.isNotBlank() }
+                    // Pin the ping target hostnames too: without them every
+                    // /delay triggers a fresh DNS lookup through the
+                    // configured resolver (1.1.1.1 UDP), which Iranian
+                    // carriers throttle to 300-2000 ms. The measured
+                    // latency then reports DNS + RTT instead of RTT.
+                    + listOf(
+                        "cp.cloudflare.com",
+                        "www.gstatic.com",
+                        "connectivitycheck.gstatic.com",
+                        "api.ip.sb",
+                    )
+                ).distinct()
+                val pinnedIps = runCatching {
+                    // Ping path only: resolve every hostname once, in
+                    // parallel, via the system resolver, and always pin it -
+                    // not just when a hijack is proven. See
+                    // ServerAddressPinner.resolveForPing for why.
+                    ServerAddressPinner.resolveForPing(hostnames)
+                }.getOrDefault(emptyMap())
+                val options = pingSingboxOptions(
+                    socksPort = 0,
+                    obfsPort = SingboxConfigBuilder.OBFS_LOCAL_PORT,
+                    workDir = workDir,
+                    pinnedServerIps = pinnedIps
+                )
+                val result = com.lumen.app.ping.BulkSocksPinger(app).measure(
+                    nodes = batch.map { it.second },
+                    core = com.lumen.app.ping.BulkSocksPinger.Core.SINGBOX,
+                    options = options,
+                    timeoutMs = 2_500
+                )
+                log("singbox bulk batch ${batchIndex + 1}/${urlTestBatches.size}: ${result.log}")
+                if (result.latencies.isNotEmpty()) {
+                    val completedPings = mutableMapOf<String, Int>()
+                    result.latencies.forEach { (index, ping) ->
+                        completedPings[batch[index].first] = ping
+                    }
+                    // One batched write instead of one per node: with up to
+                    // 150 nodes settling within the same window, N separate
+                    // updatePing calls meant N Room Flow emissions landing
+                    // back to back while the dashboard is on screen.
+                    nodeDao.updatePingsBatch(completedPings.map { (id, ping) -> Pair(id, ping as Int?) })
+                    if (_settings.value.pingAutoDeleteUnreachable) {
+                        val removed = removeUnhealthyNodesAfterPing(
+                            completedPings = completedPings,
+                            thresholdMs = _settings.value.pingAutoDeleteThresholdMs
+                        )
+                        if (removed > 0) log("Auto-removed $removed node(s) after urltest batch")
+                    }
+                    anyResult = true
+                    val measuredIds = result.latencies.keys.map { batch[it].first }.toSet()
+                    batch.filter { it.first !in measuredIds }
+                        .mapNotNullTo(allMissed) { pair -> targets.firstOrNull { it.id == pair.first } }
+                } else {
+                    log("urltest: no result for batch ${batchIndex + 1} (${batch.size} node(s)); per-node fallback")
+                    batch.mapNotNullTo(allMissed) { pair -> targets.firstOrNull { it.id == pair.first } }
+                    anyResult = true
+                }
+            }
+
+            if (allMissed.isNotEmpty()) {
+                log("urltest: ${allMissed.size} node(s) unmeasured across all batches; per-node retry")
+                missedDeferred = async { pingNodeListPerNode(allMissed, bulkPingGeneration) }
+            }
+        }
+
+        // Wait for both parallel batches before returning. The outer
+        // pingNodeListInternal still sees a fully-settled state in its
+        // own finally block, and the caller can rely on every row having
+        // been written.
+        ovpnDeferred?.await()
+        missedDeferred?.await()
+        xrayDeferred?.await()
+
+        return anyResult
+    }
+
+
+═══════════════════════════════════════════════════════════
+SECTION B: pingNodeListPerNode — FULL BODY (brace-counted)
+═══════════════════════════════════════════════════════════
+    private suspend fun pingNodeListPerNode(targets: List<NodeEntity>, generation: Long) {
+        val cfg = _settings.value
+        val limit = cfg.pingConcurrency.coerceIn(1, adaptivePingConcurrency)
+        val targetIds = targets.map { it.id }
+        val pending = java.util.Collections.synchronizedSet(targetIds.toMutableSet())
+        val completedPings = java.util.Collections.synchronizedMap(mutableMapOf<String, Int>())
+        val semaphore = kotlinx.coroutines.sync.Semaphore(limit)
+        // coroutineScope gives this suspend fun the CoroutineScope receiver
+        // `async` needs; the scope ends when every probe settles, so the
+        // structured-concurrency guarantee from the previous inline version
+        // (all children awaited before the caller continues) is preserved.
+        val finished = kotlinx.coroutines.coroutineScope {
+            val jobs = targets.map { node ->
+                async {
+                    try {
+                        semaphore.withPermit {
+                            // Real tunnel probe: spawn sing-box with this
+                            // node's config, wait for the endpoint to come
+                            // up, then measure an HTTP round trip through
+                            // the tunnel. A node that answers a bare TCP
+                            // connect but whose handshake fails must NOT
+                            // read a latency here — the number on the row
+                            // has to reflect whether the tunnel actually
+                            // works, which is what the user sees in the
+                            // Smart pick and what V2rayNG shows.
+                            val ping = performRealPing(node)
+                            val persistedPing = ping.coerceAtLeast(0)
+                            nodeDao.updatePing(node.id, persistedPing)
+                            completedPings[node.id] = persistedPing
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        runCatching {
+                            nodeDao.updatePing(node.id, 0)
+                            completedPings[node.id] = 0
+                        }
+                        log("Ping failed for ${node.name}: ${e.message}")
+                    } finally {
+                        synchronized(pending) {
+                            pending.remove(node.id)
+                            if (bulkPingGeneration == generation) {
+                                _pingingNodeIds.value = pending.toSet()
+                            }
+                        }
+                    }
+                }
+            }
+            withTimeoutOrNull(PingBudget.batchMs(targets.size, limit)) {
+                jobs.awaitAll()
+            } != null
+        }
+        if (!finished) {
+            val leftovers = synchronized(pending) { pending.toList() }
+            runCatching { nodeDao.updatePingsBatch(leftovers.map { Pair(it, 0 as Int?) }) }
+            log("Ping deadline reached: ${leftovers.size} node(s) marked unreachable")
+        }
+        if (finished && cfg.pingAutoDeleteUnreachable) {
+            val removed = removeUnhealthyNodesAfterPing(
+                completedPings = completedPings.toMap(),
+                thresholdMs = cfg.pingAutoDeleteThresholdMs
+            )
+            if (removed > 0) log("Auto-removed $removed node(s) after the ping test")
+        }
+    }
+
+
+═══════════════════════════════════════════════════════════
+SECTION C: pingNodeListInternal — FULL BODY (brace-counted)
+═══════════════════════════════════════════════════════════
+    private fun pingNodeListInternal(targets: List<NodeEntity>) {
+        if (targets.isEmpty()) return
+        val generation = ++bulkPingGeneration
+        bulkPingJob?.cancel()
+        val job = viewModelScope.launch(
+            Dispatchers.IO,
+            start = kotlinx.coroutines.CoroutineStart.LAZY
+        ) {
+            _isPinging.value = true
+            _smartTesting.value = true
+            try {
+                val targetIds = targets.map { it.id }
+                _serverTestResults.value = _serverTestResults.value - targetIds.toSet()
+                _pingingNodeIds.value = targetIds.toSet()
+                // Previous ping values are intentionally left in Room
+                // while the new pass runs. The old reset-to-null made
+                // every cold start show "—" on every row for the 6-8 s
+                // the pass took, even though the previous numbers were
+                // already in the database and still a reasonable
+                // estimate. The spinner on each row (fed by
+                // _pingingNodeIds) marks the row as under measurement;
+                // the number updates the moment a fresh sample lands.
+                // A ping pass that fails outright still ends with the
+                // deadline path marking its leftovers as 0, so no stale
+                // number outlives a genuinely unreachable node.
+
+                // Real tunnel probe for every protocol, in the fastest
+                // shape each one allows. urltest runs first: one sing-box
+                // holds all the TCP-outbound nodes (VLESS/VMess/Trojan/SS)
+                // and answers their Clash API /delay in parallel, so a
+                // dozen rows land in a few seconds. The UDP-only nodes
+                // (OVPN/WG/Hysteria2) cannot be expressed as raw outbounds
+                // and are measured on the per-node path, where the
+                // normalizer turns each one into a valid endpoint and the
+                // full tunnel probe decides whether the handshake actually
+                // completes. The user's ping-type setting no longer
+                // decides the shape — the protocol does, because only a
+                // tunnel round trip answers the question the row is meant
+                // to answer: does this config actually work.
+                val viaUrlTest = runCatching {
+                    pingNodeListViaUrlTest(targets)
+                }.getOrElse { e ->
+                    log("urltest bulk ping crashed: ${e.javaClass.simpleName}: ${e.message}")
+                    false
+                }
+                if (!viaUrlTest) {
+                    log("urltest produced no result; running per-node fallback")
+                    pingNodeListPerNode(targets, generation)
+                }
+                log("Ping finished for ${targets.size} node(s)")
+                runCatching {
+                    // TEMP DEBUG: see NodeDao.debugFindByNamePattern. Compare
+                    // this list's size and ids against what the UI shows and
+                    // against the "xray measured X/Y" ids logged above -
+                    // that comparison alone tells us duplicate-DB-rows vs
+                    // UI-cache with no ambiguity left.
+                    val dbRows = nodeDao.debugFindByNamePattern("%xhttp%")
+                    log(
+                        "DEBUG xhttp-name rows in DB: ${dbRows.size} -> " +
+                            dbRows.joinToString(" | ") { "${it.id.take(8)}:ping=${it.pingMs}" }
+                    )
+                }.onFailure { log("DEBUG dump failed: ${it.javaClass.simpleName}: ${it.message}") }
+        lastAutoPingCompletedAt = System.currentTimeMillis()
+        lastAutoPingIds = targets.map { it.id }.toSet()
+            } finally {
+                if (bulkPingGeneration == generation) {
+                    bulkPingJob = null
+                    _pingingNodeIds.value = emptySet()
+                    _isPinging.value = false
+                    _smartTesting.value = false
+                }
+            }
+        }
+        bulkPingJob = job
+        job.start()
+    }
+
+
+═══════════════════════════════════════════════════════════
+SECTION D: DashboardScreen.kt — خطوط 350-700 (LazyColumn + row composables)
+═══════════════════════════════════════════════════════════
+File: ./ui/src/main/java/com/lumen/ui/screens/DashboardScreen.kt
+
+                }
+            })
+        }
+
+        val listState = rememberLazyListState()
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                // The SLIDER layout owns a fixed bottom control; reserve its full
+                // height so the last server never scrolls underneath it.
+                contentPadding = PaddingValues(
+                    bottom = if (dashboardStyle == DashboardStyle.SLIDER) {
+                        142.dp
+                    } else {
+                        20.dp
+                    }
+                ),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                // Group headers, subscription information and server rows own their
+                // spacing so each group can render as one uninterrupted panel.
+                verticalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                item(key = "header_spacer") { Spacer(Modifier.height(4.dp)) }
+
+                // DEFAULT and CENTERED keep their hero in the scrollable header.
+                // SLIDER is fixed above the bottom navigation instead.
+                if (dashboardStyle != DashboardStyle.SLIDER) {
+                    item(key = "hero_connect") {
+                        Column {
+                            // Single source of truth for the display name.
+                            // In Smart mode no row carries isSelected (the
+                            // user's pick is "Smart"), so the old fallback
+                            // showed the first list entry — a different
+                            // server from the Smart header and the list
+                            // highlight. Following smartBestNode here keeps
+                            // the hero, the Smart box and the highlighted
+                            // row on the same node.
+                            val heroNode = if (smartModeEnabled) {
+                                smartBestNode
+                                    ?: nodes.firstOrNull { it.isSelected }
+                                    ?: nodes.firstOrNull()
+                            } else {
+                                nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
+                            }
+                            DashboardHero(
+                                connectionState = connectionState,
+                                style = dashboardStyle,
+                                isFindingServer = isFindingServer,
+                                speedStatsEnabled = speedStatsEnabled,
+                                downSpeed = downloadSpeed,
+                                upSpeed = uploadSpeed,
+                                serverName = heroNode?.name,
+                                serverCountryCode = heroNode?.countryCode,
+                                serverProtocol = heroNode?.displayProtocol ?: heroNode?.protocol,
+                                connectedPing = connectedPing,
+                                serverPingMs = heroNode?.pingMs,
+                                isCheckingPing = isCheckingPing,
+                                onCheckPing = onCheckPing,
+                                onToggleConnection = {
+                                    tick(HapticFeedbackType.LongPress)
+                                    onToggleConnection()
+                                }
+                            )
+                            Spacer(Modifier.height(6.dp))
+                        }
+                    }
+                }
+
+
+                // Server / Subscription Groups (Virtualized Layout)
+                if (groups.isEmpty()) {
+                    item(key = "empty_servers_card") {
+                        LumenCard {
+                            Text(strings.noServers, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else {
+                    visibleGroups.forEachIndexed { groupIndex, group ->
+                        val isExpanded = group.id in expandedGroups
+
+                        if (groupIndex > 0) {
+                            item(key = "group_gap_${group.id}") { Spacer(Modifier.height(8.dp)) }
+                        }
+
+                        // Group Header Tile. In Centered mode the first
+                        // group's header is replaced by the Smart Connection
+                        // header so the hero above and the list below read
+                        // as one vertical column.
+                        item(key = "group_header_${group.id}") {
+                            if (dashboardStyle == DashboardStyle.CENTERED &&
+                                groupIndex == 0
+                            ) {
+                                val manualNode = nodes.firstOrNull { it.isSelected && !it.isAutoNode }
+                                val liveNode = nodes.firstOrNull { it.isSelected } ?: nodes.firstOrNull()
+                                SmartConnectionHeader(
+                                    smartModeEnabled = smartModeEnabled,
+                                    isFindingServer = isFindingServer,
+                                    bestNode = smartBestNode,
+                                    manualNode = manualNode,
+                                    activeNode = liveNode,
+                                    testing = smartTesting,
+                                    isExpanded = isExpanded,
+                                    onToggleExpand = {
+                                        expandedGroups = if (isExpanded) expandedGroups - group.id
+                                                         else expandedGroups + group.id
+                                    },
+                                    onSelectSmart = { onToggleSmartMode(true) }
+                                )
+                            } else {
+                                SubscriptionHeaderTile(
+                                    group = group,
+                                    isExpanded = isExpanded,
+                                    onToggleExpand = {
+                                        expandedGroups = if (isExpanded) expandedGroups - group.id else expandedGroups + group.id
+                                    },
+                                    onRefreshSubscription = { onRefreshSubscription(group.id) },
+                                    onDeleteSubscription = { onDeleteSubscription(group.id) },
+                                    onPingGroup = {
+                                        if (group.isCustom) {
+                                            onPingNodes(group.nodes)
+                                        } else {
+                                            onPingGroup(if (group.isSubscription) group.id else null)
+                                        }
+                                    },
+                                    onShowProperties = { sub -> propertiesSub = sub },
+                                    onExportAll = {}
+                                )
+                            }
+                        }
+
+                        // Action row (Centered, first group only): refresh
+                        // the subscription and ping every server in it.
+                        // Shown between the Smart header and the list, only
+                        // when the group is expanded.
+                        if (groupIndex == 0 && isExpanded && dashboardStyle == DashboardStyle.CENTERED) {
+                            item(key = "action_row_${group.id}") {
+                                GroupActionRow(
+                                    serverCount = group.nodes.size,
+                                    // Refresh only makes sense for a
+                                    // subscription; a manual or custom group
+                                    // has nothing to fetch. The button is
+                                    // hidden in that case, ping-all stays.
+                                    showRefresh = group.isSubscription,
+                                    isRefreshing = group.id in refreshingIds,
+                                    onRefresh = {
+                                        tick(HapticFeedbackType.LongPress)
+                                        onRefreshSubscription(group.id)
+                                    },
+                                    onPingAll = {
+                                        tick(HapticFeedbackType.LongPress)
+                                        if (group.isCustom) {
+                                            onPingNodes(group.nodes)
+                                        } else {
+                                            onPingGroup(if (group.isSubscription) group.id else null)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        // Traffic + premium summary belongs to the opened group:
+                        // a collapsed row stays a single clean line.
+                        if (group.isSubscription && group.subscription != null && isExpanded) {
+                            val subscription = group.subscription
+                            item(key = "group_info_${group.id}") {
+                                // Same shape and zero pull-up as the Servers tab.
+                                SubscriptionInfoBar(
+                                    sub = subscription,
+                                    pullUp = 0.dp,
+                                    roundedBottom = false
+                                )
+                            }
+                            item(key = "group_provider_${group.id}") {
+                                // Renders nothing when the provider did not send metadata.
+                                SubscriptionProviderCard(
+                                    sub = subscription,
+                                    onOpenUrl = onOpenUrl
+                                )
+                            }
+                        }
+
+                        // Nodes stay virtualized: a subscription with hundreds of
+                        // servers opens instantly because only visible rows compose.
+                        // The rail background is painted per row, so the header,
+                        // the traffic bar and the list still read as one card.
+                        if (isExpanded) {
+                            // Smart Connection as the first row inside this group
+                            // (not a separate card above the groups). Looks like
+                            // any other config row; only the ⚡ icon differs.
+                            // Centered mode already prints a Smart
+                            // Connection header above the list. Repeating the
+                            // row right below duplicated the same state twice.
+                            // In Centered the row is only useful as the
+                            // "back to Smart" escape hatch after a manual
+                            // pick, so it hides while Smart is active.
+                            if (groupIndex == 0 &&
+                                (dashboardStyle != DashboardStyle.CENTERED || !smartModeEnabled)) {
+                                item(key = "smart_config_row") {
+                                    SmartConfigRow(
+                                        selected = smartModeEnabled,
+                                        bestNode = smartBestNode,
+                                        testing = smartTesting,
+                                        onClick = { onToggleSmartMode(true) }
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                }
+                            }
+                            if (group.nodes.isEmpty()) {
+                                item(key = "empty_group_${group.id}") {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f))
+                                            .padding(16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = strings.noServers,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            } else {
+                                items(
+                                    count = group.nodes.size,
+                                    key = { index -> "node_${group.id}_${group.nodes[index].id}" },
+                                    contentType = { "node_row" }
+                                ) { index ->
+                                    val node = group.nodes[index]
+                                    val isLast = index == group.nodes.lastIndex
+                                    val railShape = if (isLast) {
+                                        RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
+                                    } else {
+                                        RoundedCornerShape(0.dp)
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(railShape)
+                                            .background(
+                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
+                                            )
+                                            .padding(
+                                                start = 8.dp,
+                                                end = 8.dp,
+                                                top = 4.dp,
+                                                bottom = if (isLast) 10.dp else 4.dp
+                                            )
+                                    ) {
+                                        // When smart mode owns the selection, the
+                                        // Smart mode: the row matching the
+                                        // current best gets a lighter accent
+                                        // (accentLevel = 1) so the user sees
+                                        // which server the next Connect will
+                                        // dial. A manual pin keeps the
+                                        // stronger accent (accentLevel = 2);
+                                        // the two never collide because a
+                                        // manual pick turns Smart off.
+                                        ServerTileRow(
+                                            node = node,
+                                            isSmartPick = smartModeEnabled && smartBestNode?.id == node.id,
+                                            isPinging = node.id in pingingNodeIds,
+                                            modern = true,
+                                            onClick = { onSelectNode(node) },
+                                            onPingNode = { onPingNode(node) },
+                                            onDeleteNode = { onDeleteNode(node) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2 Side-by-side action buttons: Equal size "+ Добавить" and separate "📋 Вставить"
+                // Add / paste fill the manual bucket, so they only make sense for
+                // "All servers" and the Default group; a subscription is filled by
+                // its link. The last clause covers a stale group id: when the pref
+                // points at a deleted subscription the dashboard falls back to the
+                // Default group and the buttons must come back with it. The group
+                // itself is always reselectable from the Servers tab.
+                val showImportActions = serversGroupPref.isBlank() ||
+                    serversGroupPref == GROUP_ALL ||
+                    serversGroupPref == GROUP_MANUAL ||
+                    visibleGroups.any { !it.isSubscription && !it.isCustom }
+                // DASHBOARD ADD/PASTE — intentionally hidden. The Servers tab keeps the full
+                // add-entry menu; on the dashboard these two buttons duplicated that
+                // menu, occupied half the width and were the main source of visual
+                // clutter below the ping row.
+                // The Add/Paste row is the entry point on a fresh install: subscriptions and
+                // manual servers start here. Restored after the earlier hide pass so
+                // the Servers tab stays optional rather than required.
+                if (false && showImportActions) {
+                    item(key = "import_action_buttons") {
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // Button 1: "+ Добавить"
+                            Box(modifier = Modifier.weight(1f)) {
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                                        .clickable { showImportMenu = true },
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.60f),
+                                    shape = RoundedCornerShape(14.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 10.dp, horizontal = 8.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Add,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = strings.add,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+
+                                LumenMenu(
+                                    expanded = showImportMenu,
+                                    onDismissRequest = { showImportMenu = false }
+                                ) {
+                                    Column {
+                                        DropdownMenuItem(
+                                            text = { Text(strings.importQrCode, color = MaterialTheme.colorScheme.onSurface) },
+                                            trailingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) },
+                                            onClick = {
+
+
+═══════════════════════════════════════════════════════════
+SECTION E: DashboardScreen.kt — @Composable + itemContent (فقط خط‌شماره)
+═══════════════════════════════════════════════════════════
+119:@Composable
+120:fun DashboardScreen(
+820:@Composable
+821:private fun GroupActionRow(
+903:@Composable
+904:fun SubscriptionHeaderTile(
+1021:@Composable
+1022:fun SubscriptionInfoBar(
+1096:@Composable
+1097:internal fun ServerTileRow(
+1250:                        // protocolBadgeScheme is @Composable, so it cannot be
+1421:private fun formatHeroSpeed(bytesPerSecond: Long): String {
+1430:private fun formatHeroDuration(seconds: Long): String {
+1442:private fun heroServerLabel(countryCode: String?, protocol: String?, fallbackName: String?): String {
+1464:@Composable
+1465:private fun HeroPingTile(
+1531:@Composable
+1532:private fun DashboardHero(
+2021:@Composable
+2022:private fun HeroStatTile(
+2063:@Composable
+2064:private fun HeroMetaLine(
+2162:@Composable
+2163:private fun HeroSpeedCard(
+2203:@Composable
+2204:private fun SpeedColumn(
+2238:internal fun humanizeOrphanBucket(bucketId: String): String = when {
+2251:@Composable
+2252:private fun SmartConnectionHeader(
+2505:@Composable
+2506:private fun SmartConfigRow(
+
